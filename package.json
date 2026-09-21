@@ -1,0 +1,10 @@
+{
+  "name": "cloudgame-supertuxkart",
+  "version": "1.0.0",
+  "description": "Cloud game runner for SuperTuxKart",
+  "main": "register_tunnel.js",
+  "scripts": {
+    "start": "node register_tunnel.js"
+  },
+  "dependencies": {}
+}
