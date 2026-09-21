@@ -1,0 +1,76 @@
+name: Cloud Game Runner - SuperTuxKart (5h Auto-Restart)
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '0 */5 * * *'
+
+jobs:
+  run-cloud-game:
+    runs-on: ubuntu-latest
+    timeout-minutes: 330 # 5.5 hours max job timeout
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Install System Dependencies & X11 / noVNC Stack
+        run: |
+          sudo apt-get update -y
+          sudo apt-get install -y xvfb x11vnc novnc websockify net-tools mesa-utils libgl1-mesa-dri supertuxkart
+
+      - name: Install Cloudflared
+        run: |
+          wget -q https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64.deb
+          sudo dpkg -i cloudflared-linux-amd64.deb
+
+      - name: Launch Virtual Display & Cloud Game
+        env:
+          LIBGL_ALWAYS_SOFTWARE: '1'
+          DISPLAY: ':99'
+        run: |
+          # 1. Start Xvfb Virtual Framebuffer with 3D GLX support (1280x720 60FPS)
+          Xvfb :99 -screen 0 1280x720x24 +extension GLX +render -noreset &
+          sleep 2
+
+          # 2. Start the Game on Virtual Display :99
+          supertuxkart --windowed &
+          sleep 3
+
+          # 3. Start x11vnc with low-latency flags (60 FPS, direct framebuffer)
+          x11vnc -display :99 -forever -shared -nopw -rfbport 5900 -noxdamage -repeat -ncache 0 -wait 5 -defer 2 -fps 60 &
+          sleep 2
+
+          # 4. Start websockify / noVNC on port 8080
+          websockify --web /usr/share/novnc/ 8080 localhost:5900 &
+          sleep 2
+
+      - name: Run Cloudflare Tunnel & Register Live Stream (5 Hours)
+        env:
+          GAME_ID: 'cloudgame-supertuxkart'
+          GAME_TITLE: 'SuperTuxKart'
+          GH_PAT: '${{ secrets.GITHUB_TOKEN }}'
+        run: |
+          node register_tunnel.js &
+          TUNNEL_PID=$!
+
+          echo "Cloud game running! Will auto-restart in 4 hours 50 minutes..."
+          # Run for 17400s (4h 50m) for smooth handoff
+          sleep 17400
+
+          kill $TUNNEL_PID || true
+
+      - name: Trigger Auto-Restart Next Cycle
+        if: always()
+        run: |
+          echo "Triggering next 5-hour cycle..."
+          curl -X POST \
+            -H "Accept: application/vnd.github.v3+json" \
+            -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
+            "https://api.github.com/repos/${{ github.repository }}/actions/workflows/cloudgame.yml/dispatches" \
+            -d '{"ref":"main"}' || true
